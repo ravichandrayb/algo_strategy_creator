@@ -1,0 +1,155 @@
+{
+  "strategies": {
+    "sma_crossover": {
+      "class": "SimpleMovingAverageStrategy",
+      "display_name": "Simple Moving Average Crossover",
+      "type": "stock",
+      "description": "Generates BUY signals when short MA crosses above long MA, SELL signals when short MA crosses below long MA",
+      "parameters": {
+        "short_window": {
+          "type": "int",
+          "default": 20,
+          "min": 1,
+          "max": 100,
+          "description": "Period for short-term moving average (smaller number = more sensitive)"
+        },
+        "long_window": {
+          "type": "int",
+          "default": 50,
+          "min": 2,
+          "max": 200,
+          "description": "Period for long-term moving average (larger number = less sensitive)"
+        }
+      },
+      "required_columns": ["close"],
+      "optional_attributes": ["ticker"],
+      "signal_output": {
+        "type": "StockSignal",
+        "fields": ["ticker", "price", "action", "timestamp"]
+      }
+    },
+    "put_credit_spread": {
+      "class": "SimplePutCreditSpreadStrategy",
+      "display_name": "Simple Put Credit Spread",
+      "type": "option",
+      "description": "Generates SELL PUT signals when RSI indicates oversold conditions. Credit strategy (collect premium upfront)",
+      "parameters": {
+        "rsi_oversold": {
+          "type": "float",
+          "default": 30,
+          "min": 10,
+          "max": 50,
+          "description": "RSI threshold below which stock is considered oversold (0-100, typical: 20-30)"
+        },
+        "strike_offset": {
+          "type": "float",
+          "default": 0.05,
+          "min": 0.01,
+          "max": 0.20,
+          "description": "Percentage below current price to set put strike (0.01 = 1%, 0.05 = 5%)"
+        },
+        "days_to_expiration": {
+          "type": "int",
+          "default": 30,
+          "min": 7,
+          "max": 90,
+          "description": "Number of days until option expiration (typical: 30-60 days)"
+        }
+      },
+      "required_columns": ["close"],
+      "optional_attributes": ["ticker"],
+      "signal_output": {
+        "type": "OptionSignal",
+        "fields": ["ticker", "strike", "option_type", "price", "action", "expiration", "credit_debit", "timestamp"]
+      }
+    }
+  },
+  "signal_types": {
+    "StockSignal": {
+      "description": "Signal for stock trades",
+      "fields": {
+        "ticker": "Stock symbol",
+        "price": "Current stock price",
+        "action": "BUY or SELL",
+        "timestamp": "Signal generation time"
+      }
+    },
+    "OptionSignal": {
+      "description": "Signal for option trades",
+      "fields": {
+        "ticker": "Underlying stock symbol",
+        "strike": "Option strike price",
+        "option_type": "CALL or PUT",
+        "price": "Option premium price",
+        "action": "BUY or SELL",
+        "expiration": "Option expiration date",
+        "credit_debit": "CREDIT or DEBIT strategy",
+        "timestamp": "Signal generation time"
+      }
+    }
+  },
+  "usage_examples": {
+    "basic_usage": {
+      "description": "Basic signal generation",
+      "code": [
+        "from trading_signals import StrategyManager",
+        "import pandas as pd",
+        "",
+        "manager = StrategyManager()",
+        "df = pd.read_csv('your_data.csv')",
+        "df.ticker = 'AAPL'",
+        "signals = manager.generate_signals('sma_crossover', df)"
+      ]
+    },
+    "custom_parameters": {
+      "description": "Creating strategy with custom parameters",
+      "code": [
+        "from trading_signals import StrategyManager, SimpleMovingAverageStrategy",
+        "",
+        "manager = StrategyManager()",
+        "custom_strategy = manager.create_custom_strategy(",
+        "    'fast_sma',",
+        "    SimpleMovingAverageStrategy,",
+        "    short_window=5,",
+        "    long_window=15",
+        ")",
+        "signals = manager.generate_signals('fast_sma', df)"
+      ]
+    },
+    "get_strategy_info": {
+      "description": "Getting strategy parameter information",
+      "code": [
+        "from trading_signals import StrategyManager",
+        "",
+        "manager = StrategyManager()",
+        "manager.print_strategy_help()  # All strategies",
+        "manager.print_strategy_help('sma_crossover')  # Specific strategy",
+        "params = manager.get_strategy_parameters('sma_crossover')"
+      ]
+    }
+  },
+  "data_requirements": {
+    "dataframe_format": {
+      "required_columns": ["close"],
+      "optional_columns": ["open", "high", "low", "volume", "date"],
+      "required_attributes": ["ticker"],
+      "notes": [
+        "DataFrame must have a 'close' column with numeric values",
+        "Set df.ticker = 'SYMBOL' to specify the stock symbol",
+        "Additional columns like volume, date are ignored but can be present"
+      ]
+    },
+    "data_example": {
+      "code": [
+        "import pandas as pd",
+        "",
+        "df = pd.DataFrame({",
+        "    'date': ['2023-01-01', '2023-01-02', '2023-01-03'],",
+        "    'close': [100.0, 101.5, 99.8],",
+        "    'volume': [1000000, 1200000, 900000]",
+        "})",
+        "df.ticker = 'AAPL'  # Required attribute"
+      ]
+    }
+  }
+}
