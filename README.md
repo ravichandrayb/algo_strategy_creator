@@ -2,29 +2,68 @@
 
 A comprehensive Python package for real-time trading signal generation and strategy analysis with Zerodha Kite API integration.
 
-## Installation
+## 📦 Installation
 
-### Option 1: Install with kite_utils (Recommended)
+### Method 1: Quick Install (Recommended)
 ```bash
-# Install with automatic kite_utils integration
-pip install -e .
+git clone https://github.com/ravichandrayb/algo_strategy_creator.git
+cd algo_strategy_creator
+./install.sh
 ```
 
-### Option 2: Manual Installation
+### Method 2: Manual Installation
 ```bash
-# Install dependencies first
-pip install pandas numpy
+# Clone the repository
+git clone https://github.com/ravichandrayb/algo_strategy_creator.git
+cd algo_strategy_creator
+
+# Install core package
+pip install -e .
+
+# Install Kite API integration (optional)
 pip install git+https://github.com/ravichandrayb/kite-trading-utils.git
-
-# Then install the package
-pip install -e .
 ```
 
-### Option 3: Without kite_utils (Limited functionality)
+### Method 3: Core Package Only
 ```bash
-# Install only core dependencies (no live data fetching)
-pip install pandas numpy
+# Install without Kite integration (limited functionality)
+pip install pandas numpy python-dotenv
 pip install -e . --no-deps
+```
+
+## 🧪 Quick Test
+
+After installation, test the package:
+```bash
+# Test basic functionality
+python -c "from trading_signals import rank_strategies_simple; print('✅ Package ready!')"
+
+# Run comprehensive test suite
+trading-signals-test
+
+# Test from any directory
+cd /tmp && python -c "from trading_signals import StrategyManager; print('✅ Works from anywhere!')"
+```
+
+## ⚙️ Configuration
+
+### Kite API Setup (for live data)
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` with your Kite API credentials:
+```env
+KITE_API_KEY=your_api_key_here
+KITE_API_SECRET=your_api_secret_here
+```
+
+3. Get your API credentials from [Kite Connect](https://kite.trade/)
+
+4. Test the integration:
+```bash
+python -c "from trading_signals import analyze_symbol_with_kite; print('Kite ready!')"
 ```
 
 ## Quick Start
