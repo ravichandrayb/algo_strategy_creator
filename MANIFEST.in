@@ -1,0 +1,15 @@
+include README.md
+include PARAMETER_REFERENCE.md
+include strategy_config.json
+include test_trading_signals.py
+include .env.example
+include requirements.txt
+recursive-include trading_signals *.py
+recursive-include trading_signals *.json
+recursive-include trading_signals *.md
+recursive-include mockData *.csv *.py
+recursive-include tests *.py
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .env
+global-exclude .DS_Store
