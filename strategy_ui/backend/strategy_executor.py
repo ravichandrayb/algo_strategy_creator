@@ -255,6 +255,21 @@ class StrategyExecutor:
             exec_log['signals_generated'] = len(signals) if signals else 0
             logger.info(f"Generated {len(signals) if signals else 0} signals")
             
+            # If no new signals, just log and return (no action needed)
+            if not signals or len(signals) == 0:
+                logger.info(f"No new signals generated for {strategy_id}. Positions remain unchanged.")
+                exec_log['status'] = 'completed'
+                exec_log['orders_placed'] = 0
+                exec_log['positions_closed'] = 0
+                exec_log['duration_seconds'] = (datetime.now() - execution_start).total_seconds()
+                self.execution_logs[strategy_id].append(exec_log)
+                
+                # Update execution count
+                with self.lock:
+                    strategy_info['last_execution'] = execution_start.isoformat()
+                    strategy_info['execution_count'] += 1
+                return
+            
             # 3. Check if we need to close existing positions (signal reversal)
             positions_closed = 0
             if signals and strategy_id in self.open_positions and self.open_positions[strategy_id]:

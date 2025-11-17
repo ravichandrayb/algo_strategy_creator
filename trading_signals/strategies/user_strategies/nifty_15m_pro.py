@@ -231,17 +231,21 @@ class Nifty15mProStrategy(BaseStrategy):
         df.loc[df['short_entry'], 'signal'] = -1
         
         # Convert signals to StockSignal and OptionSignal objects
-        # For live trading, only return the MOST RECENT signal (last bar)
+        # For live trading, only return signals when there's a NEW signal change
         from trading_signals.signals import StockSignal, OptionSignal, Action, OptionType, CreditDebit
         signals = []
         
         # Get the last row (most recent data point)
-        if len(df) > 0:
+        if len(df) > 1:  # Need at least 2 rows to check for signal change
             last_idx = df.index[-1]
-            last_signal = df.loc[last_idx, 'signal']
+            prev_idx = df.index[-2]
             
-            # Only generate signal if there's a new signal on the latest bar
-            if last_signal != 0:
+            last_signal = df.loc[last_idx, 'signal']
+            prev_signal = df.loc[prev_idx, 'signal']
+            
+            # Only generate signal if there's a NEW signal change in the current candle
+            # This prevents re-executing the same signal on every 15-minute check
+            if last_signal != 0 and last_signal != prev_signal:
                 current_price = df.loc[last_idx, 'close']
                 futures_action = Action.BUY if last_signal == 1 else Action.SELL
                 
