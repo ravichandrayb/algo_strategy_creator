@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Play, Square, Activity, TrendingUp, Shield, Info, RefreshCw } from 'lucide-react';
+import { Play, Square, Activity, Shield, RefreshCw } from 'lucide-react';
 import './App.css';
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = 'http://localhost:5001/api';
 
 function App() {
   const [strategies, setStrategies] = useState([]);
@@ -19,6 +19,7 @@ function App() {
     // Poll active strategies every 5 seconds
     const interval = setInterval(fetchActiveStrategies, 5000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchStrategies = async () => {
