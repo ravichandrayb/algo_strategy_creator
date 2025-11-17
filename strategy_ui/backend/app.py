@@ -15,12 +15,26 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from trading_signals.strategies.option_strategies import *
+from trading_signals.strategies.user_strategies import *
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
 
 # Store active strategy instances
 active_strategies = {}
+
+# User strategies metadata
+USER_STRATEGY_METADATA = {
+    'Nifty15mProStrategy': {
+        'name': 'Nifty 15m Pro',
+        'description': 'Supertrend + ADX strategy for 15-minute NIFTY trading',
+        'risk_level': 'Medium',
+        'type': 'Trend Following',
+        'category': 'User Strategy',
+        'timeframe': '15m',
+        'best_for': 'NIFTY'
+    }
+}
 
 # Strategy metadata with proper names
 STRATEGY_METADATA = {
@@ -192,7 +206,48 @@ def get_strategies():
             'risk_level': metadata['risk_level'],
             'type': metadata['type'],
             'category': metadata['category'],
-            'status': 'active' if name in active_strategies else 'inactive'
+            'status': 'active' if name in active_strategies else 'inactive',
+            'strategy_type': 'option'
+        })
+    
+    return jsonify({
+        'success': True,
+        'strategies': sorted(strategies, key=lambda x: x['name']),
+        'count': len(strategies)
+    })
+
+@app.route('/api/user-strategies', methods=['GET'])
+def get_user_strategies():
+    """Get all user-defined strategies"""
+    strategies = []
+    
+    # Get all strategy classes from user_strategies module
+    from trading_signals.strategies import user_strategies
+    
+    for name in user_strategies.__all__:
+        strategy_class = getattr(user_strategies, name)
+        metadata = USER_STRATEGY_METADATA.get(name, {
+            'name': name.replace('Strategy', '').replace('_', ' ').title(),
+            'description': 'User-defined strategy',
+            'risk_level': 'Medium',
+            'type': 'Custom',
+            'category': 'User Strategy',
+            'timeframe': 'Any',
+            'best_for': 'General'
+        })
+        
+        strategies.append({
+            'id': name,
+            'class_name': name,
+            'name': metadata['name'],
+            'description': metadata['description'],
+            'risk_level': metadata['risk_level'],
+            'type': metadata['type'],
+            'category': metadata['category'],
+            'timeframe': metadata.get('timeframe', 'Any'),
+            'best_for': metadata.get('best_for', 'General'),
+            'status': 'active' if name in active_strategies else 'inactive',
+            'strategy_type': 'user'
         })
     
     return jsonify({
@@ -209,9 +264,18 @@ def deploy_strategy(strategy_id):
         symbol = data.get('symbol', 'NIFTY')
         parameters = data.get('parameters', {})
         
-        # Import and instantiate the strategy
-        from trading_signals.strategies import option_strategies
-        strategy_class = getattr(option_strategies, strategy_id)
+        # Try to import from option_strategies first, then user_strategies
+        strategy_class = None
+        strategy_name = strategy_id
+        
+        try:
+            from trading_signals.strategies import option_strategies
+            strategy_class = getattr(option_strategies, strategy_id)
+            strategy_name = STRATEGY_METADATA.get(strategy_id, {}).get('name', strategy_id)
+        except AttributeError:
+            from trading_signals.strategies import user_strategies
+            strategy_class = getattr(user_strategies, strategy_id)
+            strategy_name = USER_STRATEGY_METADATA.get(strategy_id, {}).get('name', strategy_id)
         
         # Create strategy instance
         strategy_instance = {
@@ -227,10 +291,10 @@ def deploy_strategy(strategy_id):
         
         return jsonify({
             'success': True,
-            'message': f'{STRATEGY_METADATA.get(strategy_id, {}).get("name", strategy_id)} deployed successfully',
+            'message': f'{strategy_name} deployed successfully',
             'strategy': {
                 'id': strategy_id,
-                'name': STRATEGY_METADATA.get(strategy_id, {}).get('name', strategy_id),
+                'name': strategy_name,
                 'symbol': symbol,
                 'deployed_at': strategy_instance['deployed_at'],
                 'status': 'running'
@@ -248,9 +312,13 @@ def stop_strategy(strategy_id):
     try:
         if strategy_id in active_strategies:
             stopped_strategy = active_strategies.pop(strategy_id)
+            
+            # Get strategy name from either metadata dict
+            strategy_name = STRATEGY_METADATA.get(strategy_id, USER_STRATEGY_METADATA.get(strategy_id, {})).get('name', strategy_id)
+            
             return jsonify({
                 'success': True,
-                'message': f'{STRATEGY_METADATA.get(strategy_id, {}).get("name", strategy_id)} stopped successfully',
+                'message': f'{strategy_name} stopped successfully',
                 'strategy': {
                     'id': strategy_id,
                     'name': STRATEGY_METADATA.get(strategy_id, {}).get('name', strategy_id),

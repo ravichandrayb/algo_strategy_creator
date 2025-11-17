@@ -7,14 +7,17 @@ const API_BASE_URL = 'http://localhost:5001/api';
 
 function App() {
   const [strategies, setStrategies] = useState([]);
+  const [userStrategies, setUserStrategies] = useState([]);
   const [activeStrategies, setActiveStrategies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [selectedSymbol, setSelectedSymbol] = useState('NIFTY');
   const [notification, setNotification] = useState(null);
+  const [activeTab, setActiveTab] = useState('option'); // 'option' or 'user'
 
   useEffect(() => {
     fetchStrategies();
+    fetchUserStrategies();
     fetchActiveStrategies();
     // Poll active strategies every 5 seconds
     const interval = setInterval(fetchActiveStrategies, 5000);
@@ -27,6 +30,17 @@ function App() {
       const response = await axios.get(`${API_BASE_URL}/strategies`);
       setStrategies(response.data.strategies);
       setLoading(false);
+    } catch (error) {
+      console.error('Error fetching strategies:', error);
+      showNotification('Failed to load strategies', 'error');
+      setLoading(false);
+    }
+  };
+
+  const fetchUserStrategies = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/user-strategies`);
+      setUserStrategies(response.data.strategies);
     } catch (error) {
       console.error('Error fetching strategies:', error);
       showNotification('Failed to load strategies', 'error');
@@ -53,6 +67,7 @@ function App() {
       if (response.data.success) {
         showNotification(`${strategyName} deployed successfully!`, 'success');
         fetchStrategies();
+        fetchUserStrategies();
         fetchActiveStrategies();
       }
     } catch (error) {
@@ -68,6 +83,7 @@ function App() {
       if (response.data.success) {
         showNotification(`${strategyName} stopped successfully!`, 'success');
         fetchStrategies();
+        fetchUserStrategies();
         fetchActiveStrategies();
       }
     } catch (error) {
@@ -96,11 +112,15 @@ function App() {
       case 'Bullish': return '📈';
       case 'Bearish': return '📉';
       case 'Neutral': return '➡️';
+      case 'User Strategy': return '⚡';
       default: return '📊';
     }
   };
 
-  const filteredStrategies = strategies.filter(strategy => {
+  // Get current strategy list based on active tab
+  const currentStrategies = activeTab === 'option' ? strategies : userStrategies;
+
+  const filteredStrategies = currentStrategies.filter(strategy => {
     if (filter === 'all') return true;
     if (filter === 'active') return strategy.status === 'active';
     if (filter === 'inactive') return strategy.status === 'inactive';
@@ -128,7 +148,7 @@ function App() {
           <div className="header-stats">
             <div className="stat-card">
               <span className="stat-label">Total Strategies</span>
-              <span className="stat-value">{strategies.length}</span>
+              <span className="stat-value">{strategies.length + userStrategies.length}</span>
             </div>
             <div className="stat-card active">
               <span className="stat-label">Active</span>
@@ -144,6 +164,22 @@ function App() {
           {notification.message}
         </div>
       )}
+
+      {/* Tab Switcher */}
+      <div className="tab-switcher">
+        <button 
+          className={activeTab === 'option' ? 'active' : ''} 
+          onClick={() => setActiveTab('option')}
+        >
+          📊 Option Strategies ({strategies.length})
+        </button>
+        <button 
+          className={activeTab === 'user' ? 'active' : ''} 
+          onClick={() => setActiveTab('user')}
+        >
+          ⚡ User Strategies ({userStrategies.length})
+        </button>
+      </div>
 
       {/* Controls */}
       <div className="controls">
@@ -257,6 +293,18 @@ function App() {
               </div>
 
               <p className="strategy-description">{strategy.description}</p>
+
+              {/* Additional info for user strategies */}
+              {strategy.strategy_type === 'user' && (
+                <div className="user-strategy-info">
+                  {strategy.timeframe && (
+                    <span className="info-badge">⏱️ {strategy.timeframe}</span>
+                  )}
+                  {strategy.best_for && (
+                    <span className="info-badge">🎯 Best for: {strategy.best_for}</span>
+                  )}
+                </div>
+              )}
 
               <div className="strategy-footer">
                 <div className="strategy-meta">
