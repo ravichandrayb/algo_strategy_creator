@@ -456,6 +456,18 @@ def get_strategy_orders(strategy_id):
         'count': len(orders)
     })
 
+@app.route('/api/strategies/<strategy_id>/positions', methods=['GET'])
+def get_strategy_positions(strategy_id):
+    """Get open positions for a strategy"""
+    positions = executor.get_open_positions(strategy_id)
+    
+    return jsonify({
+        'success': True,
+        'strategy_id': strategy_id,
+        'positions': positions,
+        'count': len(positions)
+    })
+
 @app.route('/api/strategies/<strategy_id>/logs', methods=['GET'])
 def get_strategy_logs(strategy_id):
     """Get execution logs for a strategy"""

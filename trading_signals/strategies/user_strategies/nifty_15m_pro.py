@@ -230,9 +230,9 @@ class Nifty15mProStrategy(BaseStrategy):
         df.loc[df['long_entry'], 'signal'] = 1
         df.loc[df['short_entry'], 'signal'] = -1
         
-        # Convert signals to StockSignal objects
+        # Convert signals to StockSignal and OptionSignal objects
         # For live trading, only return the MOST RECENT signal (last bar)
-        from trading_signals.signals import StockSignal, Action
+        from trading_signals.signals import StockSignal, OptionSignal, Action, OptionType, CreditDebit
         signals = []
         
         # Get the last row (most recent data point)
@@ -242,20 +242,44 @@ class Nifty15mProStrategy(BaseStrategy):
             
             # Only generate signal if there's a new signal on the latest bar
             if last_signal != 0:
-                action = Action.BUY if last_signal == 1 else Action.SELL
+                current_price = df.loc[last_idx, 'close']
+                futures_action = Action.BUY if last_signal == 1 else Action.SELL
                 
-                signal = StockSignal(
+                # Round to nearest strike (typically 50 or 100 for NIFTY)
+                strike_interval = 50  # NIFTY options are in 50 point intervals
+                atm_strike = round(current_price / strike_interval) * strike_interval
+                
+                # Signal 1: Futures position
+                futures_signal = StockSignal(
                     ticker='NIFTY50',
-                    action=action,
-                    price=df.loc[last_idx, 'close'],
+                    action=futures_action,
+                    price=current_price,
                     timestamp=last_idx if isinstance(last_idx, datetime) else datetime.now()
                 )
-                # Add additional attributes for stop loss and target
-                signal.stop_loss = df.loc[last_idx, 'close'] - df.loc[last_idx, 'sl_points'] if action == Action.BUY else df.loc[last_idx, 'close'] + df.loc[last_idx, 'sl_points']
-                signal.target = df.loc[last_idx, 'close'] + df.loc[last_idx, 'tp_points'] if action == Action.BUY else df.loc[last_idx, 'close'] - df.loc[last_idx, 'tp_points']
-                signal.reason = f"Supertrend {'Bull' if action == Action.BUY else 'Bear'} + ADX > {self.adx_threshold}"
+                futures_signal.stop_loss = current_price - df.loc[last_idx, 'sl_points'] if futures_action == Action.BUY else current_price + df.loc[last_idx, 'sl_points']
+                futures_signal.target = current_price + df.loc[last_idx, 'tp_points'] if futures_action == Action.BUY else current_price - df.loc[last_idx, 'tp_points']
+                futures_signal.reason = f"Supertrend {'Bull' if futures_action == Action.BUY else 'Bear'} + ADX > {self.adx_threshold}"
                 
-                signals.append(signal)
+                signals.append(futures_signal)
+                
+                # Signal 2: ATM Option hedge
+                # If SELL futures -> BUY ATM Call (hedge against upside)
+                # If BUY futures -> BUY ATM Put (hedge against downside)
+                option_type = OptionType.CALL if futures_action == Action.SELL else OptionType.PUT
+                
+                option_signal = OptionSignal(
+                    ticker='NIFTY50',
+                    action=Action.BUY,  # Always BUY the option for hedging
+                    strike=atm_strike,
+                    option_type=option_type,
+                    expiration=None,  # Will be determined by executor (nearest weekly/monthly)
+                    price=0.0,  # Will be filled by market price
+                    credit_debit=CreditDebit.DEBIT,  # Buying options is a debit
+                    timestamp=last_idx if isinstance(last_idx, datetime) else datetime.now()
+                )
+                option_signal.reason = f"Hedge for {'short' if futures_action == Action.SELL else 'long'} futures position with ATM {option_type.value}"
+                
+                signals.append(option_signal)
         
         return signals
     

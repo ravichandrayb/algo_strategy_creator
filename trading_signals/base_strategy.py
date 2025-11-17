@@ -45,23 +45,30 @@ class BaseStrategy(ABC):
     
     def filter_signals_for_live_trading(self, signals: List[Union[StockSignal, OptionSignal]]) -> List[Union[StockSignal, OptionSignal]]:
         """
-        Filter signals to only return the most recent one for live trading.
+        Filter signals to only return the most recent group for live trading.
         
-        For live trading, we only want to act on the latest signal.
+        For live trading, we only want to act on the latest signal(s).
+        If multiple signals have the same timestamp (e.g., futures + option hedge),
+        we return all of them as they should be executed together.
+        
         For backtesting, we want all historical signals.
         
         Args:
             signals: List of all generated signals
             
         Returns:
-            List containing only the most recent signal (if any)
+            List containing only the most recent signal(s) with the same timestamp
         """
         if not self.live_trading_mode or not signals:
             return signals
         
-        # Find the signal with the most recent timestamp
-        latest_signal = max(signals, key=lambda s: s.timestamp if hasattr(s, 'timestamp') else 0)
-        return [latest_signal]
+        # Find the most recent timestamp
+        latest_timestamp = max(signals, key=lambda s: s.timestamp if hasattr(s, 'timestamp') else 0).timestamp
+        
+        # Return all signals with that timestamp (handles multi-leg strategies)
+        latest_signals = [s for s in signals if hasattr(s, 'timestamp') and s.timestamp == latest_timestamp]
+        
+        return latest_signals if latest_signals else [signals[-1]]
     
     def get_strategy_info(self) -> Dict[str, Any]:
         """
