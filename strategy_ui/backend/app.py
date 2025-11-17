@@ -16,12 +16,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from trading_signals.strategies.option_strategies import *
 from trading_signals.strategies.user_strategies import *
+from strategy_executor import executor
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
 
 # Store active strategy instances
 active_strategies = {}
+
+# Start the strategy executor scheduler
+executor.start()
 
 # User strategies metadata
 USER_STRATEGY_METADATA = {
@@ -261,8 +265,9 @@ def deploy_strategy(strategy_id):
     """Deploy (activate) a strategy"""
     try:
         data = request.json or {}
-        symbol = data.get('symbol', 'NIFTY')
+        symbol = data.get('symbol', 'NIFTY50')  # Default to NIFTY50
         parameters = data.get('parameters', {})
+        interval = data.get('interval', '15minute')  # Default to 15 minute
         
         # Try to import from option_strategies first, then user_strategies
         strategy_class = None
@@ -278,25 +283,43 @@ def deploy_strategy(strategy_id):
             strategy_name = USER_STRATEGY_METADATA.get(strategy_id, {}).get('name', strategy_id)
         
         # Create strategy instance
-        strategy_instance = {
+        strategy_instance = strategy_class(**parameters) if parameters else strategy_class()
+        
+        # Deploy to executor for live execution
+        success = executor.deploy_strategy(
+            strategy_id=strategy_id,
+            strategy_instance=strategy_instance,
+            symbol=symbol,
+            interval=interval,
+            parameters=parameters
+        )
+        
+        if not success:
+            return jsonify({
+                'success': False,
+                'error': 'Strategy is already deployed'
+            }), 400
+        
+        # Also store in active_strategies for backward compatibility
+        active_strategies[strategy_id] = {
             'class_name': strategy_id,
-            'instance': strategy_class(**parameters) if parameters else strategy_class(),
+            'instance': strategy_instance,
             'symbol': symbol,
             'deployed_at': datetime.now().isoformat(),
             'status': 'running',
-            'parameters': parameters
+            'parameters': parameters,
+            'interval': interval
         }
-        
-        active_strategies[strategy_id] = strategy_instance
         
         return jsonify({
             'success': True,
-            'message': f'{strategy_name} deployed successfully',
+            'message': f'{strategy_name} deployed successfully and running live',
             'strategy': {
                 'id': strategy_id,
                 'name': strategy_name,
                 'symbol': symbol,
-                'deployed_at': strategy_instance['deployed_at'],
+                'interval': interval,
+                'deployed_at': active_strategies[strategy_id]['deployed_at'],
                 'status': 'running'
             }
         })
@@ -310,6 +333,9 @@ def deploy_strategy(strategy_id):
 def stop_strategy(strategy_id):
     """Stop (deactivate) a strategy"""
     try:
+        # Stop in executor
+        executor_stopped = executor.stop_strategy(strategy_id)
+        
         if strategy_id in active_strategies:
             stopped_strategy = active_strategies.pop(strategy_id)
             
@@ -321,7 +347,7 @@ def stop_strategy(strategy_id):
                 'message': f'{strategy_name} stopped successfully',
                 'strategy': {
                     'id': strategy_id,
-                    'name': STRATEGY_METADATA.get(strategy_id, {}).get('name', strategy_id),
+                    'name': strategy_name,
                     'stopped_at': datetime.now().isoformat()
                 }
             })
@@ -361,22 +387,39 @@ def get_active_strategies():
 
 @app.route('/api/strategies/<strategy_id>/status', methods=['GET'])
 def get_strategy_status(strategy_id):
-    """Get detailed status of a specific strategy"""
-    if strategy_id in active_strategies:
-        strategy_data = active_strategies[strategy_id]
-        metadata = STRATEGY_METADATA.get(strategy_id, {})
+    """Get detailed status of a specific strategy including live execution stats"""
+    # Get executor info
+    executor_info = executor.get_strategy_info(strategy_id)
+    
+    if strategy_id in active_strategies or executor_info:
+        strategy_data = active_strategies.get(strategy_id, {})
+        metadata = STRATEGY_METADATA.get(strategy_id, USER_STRATEGY_METADATA.get(strategy_id, {}))
+        
+        status_info = {
+            'id': strategy_id,
+            'name': metadata.get('name', strategy_id),
+            'status': 'active' if strategy_id in active_strategies else 'inactive',
+            'symbol': strategy_data.get('symbol'),
+            'deployed_at': strategy_data.get('deployed_at'),
+            'parameters': strategy_data.get('parameters', {}),
+            'metadata': metadata
+        }
+        
+        # Add executor stats if available
+        if executor_info:
+            status_info.update({
+                'last_execution': executor_info.get('last_execution'),
+                'execution_count': executor_info.get('execution_count', 0),
+                'signal_count': executor_info.get('signal_count', 0),
+                'order_count': executor_info.get('order_count', 0),
+                'total_signals': executor_info.get('total_signals', 0),
+                'total_orders': executor_info.get('total_orders', 0),
+                'interval': executor_info.get('interval')
+            })
         
         return jsonify({
             'success': True,
-            'strategy': {
-                'id': strategy_id,
-                'name': metadata.get('name', strategy_id),
-                'status': 'active',
-                'symbol': strategy_data['symbol'],
-                'deployed_at': strategy_data['deployed_at'],
-                'parameters': strategy_data.get('parameters', {}),
-                'metadata': metadata
-            }
+            'strategy': status_info
         })
     else:
         return jsonify({
@@ -386,6 +429,45 @@ def get_strategy_status(strategy_id):
                 'status': 'inactive'
             }
         })
+
+@app.route('/api/strategies/<strategy_id>/signals', methods=['GET'])
+def get_strategy_signals(strategy_id):
+    """Get signal history for a strategy"""
+    limit = request.args.get('limit', 50, type=int)
+    signals = executor.get_signal_history(strategy_id, limit=limit)
+    
+    return jsonify({
+        'success': True,
+        'strategy_id': strategy_id,
+        'signals': signals,
+        'count': len(signals)
+    })
+
+@app.route('/api/strategies/<strategy_id>/orders', methods=['GET'])
+def get_strategy_orders(strategy_id):
+    """Get order history for a strategy"""
+    limit = request.args.get('limit', 50, type=int)
+    orders = executor.get_order_history(strategy_id, limit=limit)
+    
+    return jsonify({
+        'success': True,
+        'strategy_id': strategy_id,
+        'orders': orders,
+        'count': len(orders)
+    })
+
+@app.route('/api/strategies/<strategy_id>/logs', methods=['GET'])
+def get_strategy_logs(strategy_id):
+    """Get execution logs for a strategy"""
+    limit = request.args.get('limit', 50, type=int)
+    logs = executor.get_execution_logs(strategy_id, limit=limit)
+    
+    return jsonify({
+        'success': True,
+        'strategy_id': strategy_id,
+        'logs': logs,
+        'count': len(logs)
+    })
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -397,4 +479,7 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    # Use debug=False when running in background, or set use_reloader=False
+    import sys
+    debug_mode = sys.stdin.isatty()  # Only use debug if running interactively
+    app.run(debug=debug_mode, port=5001, use_reloader=False)

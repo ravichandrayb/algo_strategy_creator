@@ -18,6 +18,7 @@ import pandas as pd
 import numpy as np
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # Add trading_signals to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -54,7 +55,22 @@ class Nifty15mProStrategy(BaseStrategy):
             sl_atr_multiplier: ATR multiplier for stop loss
             tp_atr_multiplier: ATR multiplier for take profit
         """
-        super().__init__("Nifty 15m Pro Strategy")
+        # Prepare parameters dict
+        params = {
+            'supertrend_factor': supertrend_factor,
+            'atr_period': atr_period,
+            'adx_period': adx_period,
+            'adx_threshold': adx_threshold,
+            'sl_base': sl_base,
+            'tp_base': tp_base,
+            'sl_atr_multiplier': sl_atr_multiplier,
+            'tp_atr_multiplier': tp_atr_multiplier
+        }
+        
+        # Initialize base class
+        super().__init__("Nifty 15m Pro Strategy", params, is_option_trade=False)
+        
+        # Set instance variables
         self.supertrend_factor = supertrend_factor
         self.atr_period = atr_period
         self.adx_period = adx_period
@@ -165,11 +181,15 @@ class Nifty15mProStrategy(BaseStrategy):
         
         Args:
             df: DataFrame with columns ['open', 'high', 'low', 'close', 'volume']
+               or ['Open', 'High', 'Low', 'Close', 'Volume']
             
         Returns:
-            DataFrame with additional columns for signals
+            List of StockSignal objects
         """
         df = df.copy()
+        
+        # Normalize column names to lowercase
+        df.columns = df.columns.str.lower()
         
         # Calculate Supertrend
         supertrend, direction = self.calculate_supertrend(
@@ -210,7 +230,34 @@ class Nifty15mProStrategy(BaseStrategy):
         df.loc[df['long_entry'], 'signal'] = 1
         df.loc[df['short_entry'], 'signal'] = -1
         
-        return df
+        # Convert signals to StockSignal objects
+        # For live trading, only return the MOST RECENT signal (last bar)
+        from trading_signals.signals import StockSignal, Action
+        signals = []
+        
+        # Get the last row (most recent data point)
+        if len(df) > 0:
+            last_idx = df.index[-1]
+            last_signal = df.loc[last_idx, 'signal']
+            
+            # Only generate signal if there's a new signal on the latest bar
+            if last_signal != 0:
+                action = Action.BUY if last_signal == 1 else Action.SELL
+                
+                signal = StockSignal(
+                    ticker='NIFTY50',
+                    action=action,
+                    price=df.loc[last_idx, 'close'],
+                    timestamp=last_idx if isinstance(last_idx, datetime) else datetime.now()
+                )
+                # Add additional attributes for stop loss and target
+                signal.stop_loss = df.loc[last_idx, 'close'] - df.loc[last_idx, 'sl_points'] if action == Action.BUY else df.loc[last_idx, 'close'] + df.loc[last_idx, 'sl_points']
+                signal.target = df.loc[last_idx, 'close'] + df.loc[last_idx, 'tp_points'] if action == Action.BUY else df.loc[last_idx, 'close'] - df.loc[last_idx, 'tp_points']
+                signal.reason = f"Supertrend {'Bull' if action == Action.BUY else 'Bear'} + ADX > {self.adx_threshold}"
+                
+                signals.append(signal)
+        
+        return signals
     
     def get_parameters(self):
         """Return strategy parameters"""

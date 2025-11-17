@@ -51,6 +51,9 @@ class CashSecuredPutStrategy(BaseStrategy):
     def generate_signals(self, df: pd.DataFrame) -> List[OptionSignal]:
         signals = []
         
+        # Normalize column names to lowercase
+        df = self.normalize_dataframe(df)
+        
         if 'close' not in df.columns or 'low' not in df.columns:
             raise ValueError("DataFrame must contain 'close' and 'low' columns")
         

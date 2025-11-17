@@ -50,6 +50,9 @@ class SimpleMovingAverageStrategy(BaseStrategy):
     def generate_signals(self, df: pd.DataFrame) -> List[StockSignal]:
         signals = []
         
+        # Normalize column names to lowercase
+        df = self.normalize_dataframe(df)
+        
         if 'close' not in df.columns:
             raise ValueError("DataFrame must contain 'close' column")
         

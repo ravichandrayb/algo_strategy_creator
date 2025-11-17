@@ -54,6 +54,9 @@ class BearPutSpreadStrategy(BaseStrategy):
     def generate_signals(self, df: pd.DataFrame) -> List[OptionSignal]:
         signals = []
         
+        # Normalize column names to lowercase
+        df = self.normalize_dataframe(df)
+        
         required_cols = ['close', 'high']
         if not all(col in df.columns for col in required_cols):
             raise ValueError(f"DataFrame must contain columns: {required_cols}")

@@ -9,6 +9,9 @@ class BaseStrategy(ABC):
         self.name = name
         self.params = params
         self.is_option_trade = is_option_trade
+        # Flag to control whether to return all signals or only the latest
+        # For live trading, this should be True. For backtesting, False.
+        self.live_trading_mode = True  # Default to live trading mode
     
     @abstractmethod
     def generate_signals(self, df: pd.DataFrame) -> List[Union[StockSignal, OptionSignal]]:
@@ -22,6 +25,43 @@ class BaseStrategy(ABC):
             List[Union[StockSignal, OptionSignal]]: List of generated signals
         """
         pass
+    
+    def normalize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalize DataFrame column names to lowercase.
+        
+        KiteDataFetcher returns columns as 'Open', 'High', 'Low', 'Close', 'Volume'
+        but most strategies expect lowercase 'open', 'high', 'low', 'close', 'volume'.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            DataFrame with lowercase column names
+        """
+        df_copy = df.copy()
+        df_copy.columns = df_copy.columns.str.lower()
+        return df_copy
+    
+    def filter_signals_for_live_trading(self, signals: List[Union[StockSignal, OptionSignal]]) -> List[Union[StockSignal, OptionSignal]]:
+        """
+        Filter signals to only return the most recent one for live trading.
+        
+        For live trading, we only want to act on the latest signal.
+        For backtesting, we want all historical signals.
+        
+        Args:
+            signals: List of all generated signals
+            
+        Returns:
+            List containing only the most recent signal (if any)
+        """
+        if not self.live_trading_mode or not signals:
+            return signals
+        
+        # Find the signal with the most recent timestamp
+        latest_signal = max(signals, key=lambda s: s.timestamp if hasattr(s, 'timestamp') else 0)
+        return [latest_signal]
     
     def get_strategy_info(self) -> Dict[str, Any]:
         """
