@@ -21,11 +21,10 @@ from typing import List, Dict
 def setup_environment():
     """Load environment and verify kite_utils availability"""
     try:
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
-        print("✅ Environment loaded")
+        from trading_signals.config import config
+        print("✅ Environment loaded from centralized config")
     except ImportError:
-        print("⚠️  python-dotenv not found, using system environment")
+        print("⚠️  Configuration module not found, using system environment")
     
     try:
         from kite_utils import SimpleTokenManager, generate_access_token_automated

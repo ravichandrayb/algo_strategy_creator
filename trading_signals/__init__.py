@@ -9,6 +9,7 @@ from .parameter_discovery import (
     print_all_parameters, print_strategy_parameters, get_parameter_cheatsheet,
     find_strategies_by_indicator
 )
+from .config import config, ensure_config_valid
 
 # Import Kite integration functions (gracefully handle missing kite_utils)
 try:
@@ -46,7 +47,9 @@ __all__ = [
     "print_all_parameters",
     "print_strategy_parameters",
     "get_parameter_cheatsheet",
-    "find_strategies_by_indicator"
+    "find_strategies_by_indicator",
+    "config",
+    "ensure_config_valid"
 ] + _kite_functions
 
 # Convenience function for quick help

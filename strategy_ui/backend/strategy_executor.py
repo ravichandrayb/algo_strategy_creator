@@ -63,17 +63,16 @@ class StrategyExecutor:
     def _initialize_kite_clients(self):
         """Initialize KiteDataFetcher and KiteConnect clients"""
         try:
+            # Initialize KiteConnect for order placement
+            # Get credentials from centralized config
+            from trading_signals.config import config
+            
+            # Initialize KiteDataFetcher
             self.data_fetcher = KiteDataFetcher()
             logger.info("KiteDataFetcher initialized successfully")
             
-            # Initialize KiteConnect for order placement
-            # Get credentials from environment
-            import os
-            from dotenv import load_dotenv
-            load_dotenv()
-            
-            api_key = os.getenv('KITE_API_KEY') or os.getenv('API_KEY')
-            access_token = os.getenv('KITE_ACCESS_TOKEN') or os.getenv('ACCESS_TOKEN')
+            api_key = config.KITE_API_KEY
+            access_token = config.KITE_ACCESS_TOKEN
             
             if api_key and access_token:
                 self.kite_client = KiteConnect(api_key=api_key)
@@ -145,14 +144,18 @@ class StrategyExecutor:
             
             # Schedule the strategy execution
             job_id = f"strategy_{strategy_id}"
+            from apscheduler.triggers.interval import IntervalTrigger
+            import pytz
+            ist = pytz.timezone('Asia/Kolkata')
+            
             self.scheduler.add_job(
                 func=self._execute_strategy,
-                trigger=IntervalTrigger(minutes=interval_minutes),
+                trigger=IntervalTrigger(minutes=interval_minutes, timezone=ist),
                 args=[strategy_id],
                 id=job_id,
                 name=f"Execute {strategy_instance.name}",
                 replace_existing=True,
-                next_run_time=datetime.now()  # Run immediately on deployment
+                next_run_time=datetime.now(ist)  # Run immediately on deployment
             )
             
             logger.info(f"Strategy {strategy_id} deployed successfully. Will run every {interval_minutes} minutes.")
@@ -294,22 +297,49 @@ class StrategyExecutor:
             
             # 4. Process and place orders for new signals
             orders_placed = 0
+            futures_expiry = None  # Store futures expiry to use for options
+            
             if signals:
+                # First pass: place futures orders and capture expiry
                 for signal in signals:
-                    signal_dict = self._signal_to_dict(signal)
-                    signal_dict['strategy_id'] = strategy_id
-                    signal_dict['timestamp'] = execution_start.isoformat()
-                    
-                    # Store signal
-                    self.signal_history[strategy_id].append(signal_dict)
-                    
-                    # Place order
-                    order_result = self._place_order(signal, symbol, strategy_id)
-                    if order_result:
-                        order_result['strategy_id'] = strategy_id
-                        order_result['signal'] = signal_dict
-                        self.order_history[strategy_id].append(order_result)
-                        orders_placed += 1
+                    if not isinstance(signal, OptionSignal):
+                        signal_dict = self._signal_to_dict(signal)
+                        signal_dict['strategy_id'] = strategy_id
+                        signal_dict['timestamp'] = execution_start.isoformat()
+                        
+                        # Store signal
+                        self.signal_history[strategy_id].append(signal_dict)
+                        
+                        # Place order
+                        order_result = self._place_order(signal, symbol, strategy_id, futures_expiry)
+                        if order_result:
+                            order_result['strategy_id'] = strategy_id
+                            order_result['signal'] = signal_dict
+                            self.order_history[strategy_id].append(order_result)
+                            orders_placed += 1
+                            
+                            # Capture the futures expiry for options
+                            if order_result.get('expiry'):
+                                futures_expiry = datetime.fromisoformat(order_result['expiry'])
+                                logger.info(f"Captured futures expiry: {futures_expiry} for option orders")
+                
+                # Second pass: place option orders with futures expiry
+                for signal in signals:
+                    if isinstance(signal, OptionSignal):
+                        signal_dict = self._signal_to_dict(signal)
+                        signal_dict['strategy_id'] = strategy_id
+                        signal_dict['timestamp'] = execution_start.isoformat()
+                        
+                        # Store signal
+                        self.signal_history[strategy_id].append(signal_dict)
+                        
+                        # Place order with futures expiry
+                        order_result = self._place_order(signal, symbol, strategy_id, futures_expiry)
+                        if order_result:
+                            order_result['strategy_id'] = strategy_id
+                            order_result['signal'] = signal_dict
+                            self.order_history[strategy_id].append(order_result)
+                            orders_placed += 1
             
             exec_log['orders_placed'] = orders_placed
             
@@ -406,16 +436,36 @@ class StrategyExecutor:
             # Symbol mapping
             symbol_map = {
                 'NIFTY50': 'NIFTY',
+                'NIFTY 50': 'NIFTY',  # Handle space variant
                 'NIFTY': 'NIFTY',
                 'BANKNIFTY': 'BANKNIFTY',
+                'BANK NIFTY': 'BANKNIFTY',  # Handle space variant
                 'FINNIFTY': 'FINNIFTY',
-                'MIDCPNIFTY': 'MIDCPNIFTY'
+                'FIN NIFTY': 'FINNIFTY',  # Handle space variant
+                'MIDCPNIFTY': 'MIDCPNIFTY',
+                'MIDCP NIFTY': 'MIDCPNIFTY'  # Handle space variant
             }
             
-            base_symbol = symbol_map.get(symbol, symbol)
+            # Normalize and map symbol
+            normalized_symbol = symbol.strip().upper()
+            base_symbol = symbol_map.get(normalized_symbol, symbol_map.get(symbol, symbol.strip()))
             
-            # Get the nearest expiry if not provided
-            if expiry is None and self.kite_client:
+            # Convert expiry to date if provided
+            expiry_date = None
+            if expiry:
+                if isinstance(expiry, datetime):
+                    expiry_date = expiry.date()
+                elif hasattr(expiry, 'year') and hasattr(expiry, 'day'):
+                    expiry_date = expiry
+                elif isinstance(expiry, str):
+                    try:
+                        expiry_date = datetime.fromisoformat(expiry).date()
+                    except ValueError:
+                        logger.warning(f"Could not parse expiry string '{expiry}', defaulting to automatic lookup")
+                        expiry_date = None
+
+            # Try to fetch instrument from Kite if client available
+            if self.kite_client:
                 try:
                     instruments = self.kite_client.instruments("NFO")
                     
@@ -426,7 +476,10 @@ class StrategyExecutor:
                         if inst['name'] == base_symbol
                         and inst['instrument_type'] == option_suffix
                         and inst['strike'] == strike
-                        and inst['expiry'] >= datetime.now().date()
+                        and (
+                            (expiry_date and inst['expiry'] == expiry_date)
+                            or (not expiry_date and inst['expiry'] >= datetime.now().date())
+                        )
                     ]
                     
                     if options:
@@ -443,8 +496,8 @@ class StrategyExecutor:
                 except Exception as e:
                     logger.error(f"Error fetching option instruments: {str(e)}")
                     return self._construct_option_symbol(base_symbol, strike, option_type)
-            else:
-                return self._construct_option_symbol(base_symbol, strike, option_type, expiry)
+            # Fallback to manual symbol construction
+            return self._construct_option_symbol(base_symbol, strike, option_type, expiry_date or expiry)
                 
         except Exception as e:
             logger.error(f"Error getting option trading symbol: {str(e)}")
@@ -453,7 +506,8 @@ class StrategyExecutor:
     def _construct_option_symbol(self, base_symbol: str, strike: float, option_type: str, expiry=None) -> str:
         """
         Manually construct option trading symbol.
-        Format: NIFTY2511925950CE (NIFTY 19 Nov 2025, 25950 Strike, Call)
+        Format: NIFTY25NOV26050CE (NIFTY 25 Nov 2025, 26050 Strike, Call)
+        Zerodha format: BASE + YY + MMM + STRIKE + CE/PE
         """
         from datetime import datetime, timedelta
         
@@ -465,15 +519,14 @@ class StrategyExecutor:
                 days_ahead += 7
             expiry = today + timedelta(days=days_ahead)
         
-        # Format: YY + M + DD (e.g., 25N19 for Nov 19, 2025)
+        # Format: YY + MMM (e.g., 25NOV for Nov 2025)
         year = expiry.strftime('%y')
-        month = expiry.strftime('%b').upper()[0]  # N for Nov, O for Oct, D for Dec
-        day = expiry.strftime('%d')
+        month = expiry.strftime('%b').upper()  # NOV, DEC, JAN, etc. (3 letters)
         
         option_suffix = 'CE' if option_type.upper() == 'CALL' else 'PE'
         strike_int = int(strike)
         
-        symbol = f"{base_symbol}{year}{month}{day}{strike_int}{option_suffix}"
+        symbol = f"{base_symbol}{year}{month}{strike_int}{option_suffix}"
         logger.info(f"Constructed option symbol: {symbol}")
         return symbol
     
@@ -523,9 +576,9 @@ class StrategyExecutor:
             logger.error(f"Error getting lot size: {str(e)}")
             return 1
     
-    def _get_trading_symbol(self, symbol: str) -> str:
+    def _get_trading_symbol(self, symbol: str) -> tuple[str, Optional[datetime]]:
         """
-        Get the actual trading symbol for order placement.
+        Get the actual trading symbol for order placement along with its expiry date.
         
         Maps commonly used symbols to their actual trading symbols:
         - NIFTY50 -> NIFTY 50 (spot index for data, but we'll use futures)
@@ -538,19 +591,25 @@ class StrategyExecutor:
             symbol: Input symbol (e.g., 'NIFTY50', 'BANKNIFTY')
             
         Returns:
-            Valid trading symbol for order placement
+            Tuple of (trading_symbol, expiry_date)
         """
         try:
             # Symbol mapping for common indices
             symbol_map = {
                 'NIFTY50': 'NIFTY',
+                'NIFTY 50': 'NIFTY',  # Handle space variant
                 'NIFTY': 'NIFTY',
                 'BANKNIFTY': 'BANKNIFTY',
+                'BANK NIFTY': 'BANKNIFTY',  # Handle space variant
                 'FINNIFTY': 'FINNIFTY',
-                'MIDCPNIFTY': 'MIDCPNIFTY'
+                'FIN NIFTY': 'FINNIFTY',  # Handle space variant
+                'MIDCPNIFTY': 'MIDCPNIFTY',
+                'MIDCP NIFTY': 'MIDCPNIFTY'  # Handle space variant
             }
             
-            base_symbol = symbol_map.get(symbol, symbol)
+            # Normalize symbol: strip spaces and convert to uppercase
+            normalized_symbol = symbol.strip().upper()
+            base_symbol = symbol_map.get(normalized_symbol, symbol_map.get(symbol, symbol.strip()))
             
             # For indices, we need to find the current month futures contract
             # Use Kite's instruments list to find the correct symbol
@@ -575,23 +634,24 @@ class StrategyExecutor:
                         # Sort by expiry and get the nearest one
                         futures.sort(key=lambda x: x['expiry'])
                         nearest_contract = futures[0]
-                        logger.info(f"Mapped {symbol} -> {nearest_contract['tradingsymbol']} (Expiry: {nearest_contract['expiry']})")
-                        return nearest_contract['tradingsymbol']
+                        expiry_date = nearest_contract['expiry']
+                        logger.info(f"Mapped {symbol} -> {nearest_contract['tradingsymbol']} (Expiry: {expiry_date})")
+                        return nearest_contract['tradingsymbol'], expiry_date
                     else:
                         logger.warning(f"No futures contract found for {base_symbol}, using base symbol")
-                        return base_symbol
+                        return base_symbol, None
                         
                 except Exception as e:
                     logger.error(f"Error fetching instruments: {str(e)}")
-                    return base_symbol
+                    return base_symbol, None
             else:
-                return base_symbol
+                return base_symbol, None
                 
         except Exception as e:
             logger.error(f"Error mapping trading symbol: {str(e)}")
-            return symbol
+            return symbol, None
     
-    def _place_order(self, signal, symbol: str, strategy_id: str = None) -> Optional[Dict[str, Any]]:
+    def _place_order(self, signal, symbol: str, strategy_id: str = None, futures_expiry: datetime = None) -> Optional[Dict[str, Any]]:
         """
         Place order based on signal
         
@@ -599,6 +659,7 @@ class StrategyExecutor:
             signal: Signal object
             symbol: Trading symbol
             strategy_id: Strategy ID for position tracking
+            futures_expiry: Expiry date of the futures contract (to match with options)
         
         Returns:
             Dict with order details if successful, None otherwise
@@ -607,6 +668,8 @@ class StrategyExecutor:
             if not self.kite_client:
                 logger.error("KiteConnect client not initialized. Cannot place order.")
                 return None
+
+            expiry = None  # Track expiry associated with the order (futures/options)
             
             # Determine order parameters based on signal - handle both action and signal_type
             if hasattr(signal, 'action'):
@@ -639,11 +702,32 @@ class StrategyExecutor:
                 # Get option type value (it's an enum)
                 option_type_str = option_type.value if hasattr(option_type, 'value') else str(option_type)
                 
-                trading_symbol = self._get_option_trading_symbol(symbol, strike, option_type_str, expiration)
+                # Use the futures expiry if provided (to match with futures contract)
+                if futures_expiry and not expiration:
+                    expiration = futures_expiry
+                    logger.info(f"Using futures expiry date for option: {expiration}")
+
+                # Normalise expiration to datetime for consistent handling
+                if expiration:
+                    if isinstance(expiration, datetime):
+                        expiry = expiration
+                    elif hasattr(expiration, 'isoformat'):
+                        # Handles date objects
+                        expiry = datetime.combine(expiration, datetime.min.time()) if not isinstance(expiration, datetime) else expiration
+                    elif isinstance(expiration, str):
+                        try:
+                            expiry = datetime.fromisoformat(expiration)
+                        except ValueError:
+                            logger.warning(f"Could not parse option expiry string '{expiration}', defaulting to None")
+                            expiry = None
+                else:
+                    expiry = None
+
+                trading_symbol = self._get_option_trading_symbol(symbol, strike, option_type_str, expiry)
                 exchange = self.kite_client.EXCHANGE_NFO
             else:
                 # For stocks/indices, get the correct trading symbol
-                trading_symbol = self._get_trading_symbol(symbol)
+                trading_symbol, expiry = self._get_trading_symbol(symbol)
                 # Determine exchange based on trading symbol
                 # If it's a futures contract (ends with FUT), use NFO exchange
                 if trading_symbol.endswith('FUT') or trading_symbol.endswith('CE') or trading_symbol.endswith('PE'):
@@ -698,7 +782,8 @@ class StrategyExecutor:
                 'quantity': quantity,
                 'order_type': 'MARKET',
                 'status': 'placed',
-                'params': order_params
+                'params': order_params,
+                'expiry': expiry.isoformat() if expiry else None
             }
             
         except Exception as e:
